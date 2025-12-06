@@ -130,6 +130,22 @@ main {
   color: #777;
 }
 
+.interval-inputs {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.interval-inputs input {
+  flex: 1;
+  max-width: 150px;
+}
+
+.interval-inputs select {
+  flex: 1;
+  max-width: 150px;
+}
+
 footer {
   padding: 32px;
   background: #f9f9f9;

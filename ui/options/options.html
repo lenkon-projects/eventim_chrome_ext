@@ -24,17 +24,15 @@
         </div>
 
         <div class="setting-group">
-          <label for="frequency">Frequency:</label>
-          <select id="frequency">
-            <option value="daily">Daily</option>
-            <option value="weekly">Weekly</option>
-            <option value="custom">Custom (hours)</option>
-          </select>
-        </div>
-
-        <div class="setting-group" id="customHoursGroup" style="display: none;">
-          <label for="customHours">Hours between runs:</label>
-          <input type="number" id="customHours" min="1" max="168" value="24">
+          <label>Run interval:</label>
+          <div class="interval-inputs">
+            <input type="number" id="intervalValue" min="1" max="10080" value="60">
+            <select id="intervalUnit">
+              <option value="minutes">Minutes</option>
+              <option value="hours">Hours</option>
+            </select>
+          </div>
+          <small>Run every N minutes/hours (skips if already running)</small>
         </div>
       </section>
 

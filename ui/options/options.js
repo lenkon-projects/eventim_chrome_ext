@@ -2,9 +2,8 @@
 
 // Elements
 const autoDownloadEnabled = document.getElementById('autoDownloadEnabled');
-const frequency = document.getElementById('frequency');
-const customHours = document.getElementById('customHours');
-const customHoursGroup = document.getElementById('customHoursGroup');
+const intervalValue = document.getElementById('intervalValue');
+const intervalUnit = document.getElementById('intervalUnit');
 const filenamePattern = document.getElementById('filenamePattern');
 const delayMin = document.getElementById('delayMin');
 const delayMax = document.getElementById('delayMax');
@@ -16,15 +15,6 @@ const saveStatus = document.getElementById('saveStatus');
 
 // Load settings on page load
 document.addEventListener('DOMContentLoaded', loadSettings);
-
-// Show/hide custom hours input based on frequency selection
-frequency.addEventListener('change', () => {
-  if (frequency.value === 'custom') {
-    customHoursGroup.style.display = 'block';
-  } else {
-    customHoursGroup.style.display = 'none';
-  }
-});
 
 // Save button
 saveBtn.addEventListener('click', saveSettings);
@@ -43,12 +33,8 @@ async function loadSettings() {
     // Schedule settings
     if (settings.schedule) {
       autoDownloadEnabled.checked = settings.schedule.enabled || false;
-      frequency.value = settings.schedule.frequency || 'daily';
-      customHours.value = settings.schedule.customHours || 24;
-
-      if (frequency.value === 'custom') {
-        customHoursGroup.style.display = 'block';
-      }
+      intervalValue.value = settings.schedule.intervalValue || 60;
+      intervalUnit.value = settings.schedule.intervalUnit || 'minutes';
     }
 
     // Filename pattern
@@ -90,8 +76,8 @@ async function saveSettings() {
     const settings = {
       schedule: {
         enabled: autoDownloadEnabled.checked,
-        frequency: frequency.value,
-        customHours: parseInt(customHours.value) || 24
+        intervalValue: parseInt(intervalValue.value) || 60,
+        intervalUnit: intervalUnit.value
       },
       filenamePattern: filenamePattern.value || '{eventName}_{dateRange}_{timestamp}.html',
       delays: {

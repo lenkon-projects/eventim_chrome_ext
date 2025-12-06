@@ -12,7 +12,13 @@ chrome.runtime.onInstalled.addListener(async (details) => {
 
   if (details.reason === 'install') {
     // Initialize default settings
-    await storage.saveSettings(CONFIG.DEFAULTS);
+    await storage.saveSettings({
+      schedule: CONFIG.DEFAULTS.SCHEDULE,
+      filenamePattern: CONFIG.DEFAULTS.FILENAME_PATTERN,
+      delays: CONFIG.DEFAULTS.DELAYS,
+      retryAttempts: CONFIG.DEFAULTS.RETRY_ATTEMPTS,
+      notifications: CONFIG.DEFAULTS.NOTIFICATIONS
+    });
     logger.info('Default settings initialized');
   }
 });
@@ -64,13 +70,15 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name === 'eventim-download') {
     logger.info('Scheduled download alarm triggered');
 
-    // Check if enough time has passed since last run
-    const shouldRun = await shouldRunScheduledDownload();
-    if (shouldRun) {
-      await initiateDownloadFlow('scheduled');
-    } else {
-      logger.info('Skipping scheduled run - ran too recently');
+    // Check if automation is already running
+    const lockStatus = await storage.checkAutomationLock();
+    if (lockStatus.active) {
+      logger.info('Skipping scheduled run - automation already running');
+      return;
     }
+
+    // Start download
+    await initiateDownloadFlow('scheduled');
   }
 });
 
@@ -86,20 +94,6 @@ chrome.tabs.onRemoved.addListener(async (tabId, removeInfo) => {
     notifyStatusUpdate();
   }
 });
-
-// Check if scheduled download should run
-async function shouldRunScheduledDownload() {
-  const state = await storage.getState();
-
-  if (!state.lastRun?.timestamp) {
-    return true;
-  }
-
-  const hoursSinceLastRun = (Date.now() - new Date(state.lastRun.timestamp).getTime()) / (1000 * 60 * 60);
-  const minInterval = 23; // At least 23 hours between runs
-
-  return hoursSinceLastRun >= minInterval;
-}
 
 // Manual trigger from popup
 async function handleManualTrigger() {
@@ -469,28 +463,17 @@ async function updateSchedule(schedule) {
   }
 
   // Calculate period in minutes
-  let periodInMinutes;
-  switch (schedule.frequency) {
-    case 'daily':
-      periodInMinutes = 24 * 60;
-      break;
-    case 'weekly':
-      periodInMinutes = 7 * 24 * 60;
-      break;
-    case 'custom':
-      periodInMinutes = schedule.customHours * 60;
-      break;
-    default:
-      periodInMinutes = 24 * 60;
-  }
+  const intervalValue = schedule.intervalValue || 60;
+  const intervalUnit = schedule.intervalUnit || 'minutes';
+  const periodInMinutes = intervalUnit === 'hours' ? intervalValue * 60 : intervalValue;
 
-  // Create alarm
+  // Create alarm - starts immediately, then repeats every period
   await chrome.alarms.create('eventim-download', {
     periodInMinutes: periodInMinutes,
-    delayInMinutes: periodInMinutes // First run after this delay
+    delayInMinutes: periodInMinutes
   });
 
-  logger.info(`Schedule set to run every ${periodInMinutes} minutes`);
+  logger.info(`Schedule set: run every ${periodInMinutes} minutes (${intervalValue} ${intervalUnit})`);
 }
 
 // Listen for settings changes
