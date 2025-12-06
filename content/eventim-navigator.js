@@ -580,15 +580,34 @@ class EventimNavigator {
       return;
     }
 
-    this.logger.info('HTML button found, clicking');
+    this.logger.info('HTML button found, extracting URL');
     this.retryCount = 0; // Reset retry count on success
 
-    // Add delay before clicking
+    // Extract URL from button href
+    const reportUrl = htmlButton.href;
+    if (!reportUrl) {
+      this.logger.error('HTML button has no href attribute');
+      chrome.runtime.sendMessage({
+        type: CONFIG.MESSAGE_TYPES.ERROR,
+        error: {
+          code: CONFIG.ERROR_CODES.ELEMENT_NOT_FOUND,
+          message: 'HTML button has no URL'
+        }
+      });
+      return;
+    }
+
+    this.logger.info('Opening report URL in background tab:', reportUrl);
+
+    // Add delay before opening
     await this.randomDelay(500, 1000);
 
-    // Click to open report in new tab
+    // Send message to background to open URL in background tab (without stealing focus)
     // The new tab will have report-extractor.js injected
-    htmlButton.click();
+    chrome.runtime.sendMessage({
+      type: CONFIG.MESSAGE_TYPES.OPEN_REPORT_URL,
+      url: reportUrl
+    });
 
     this.logger.info('Waiting for report to be downloaded');
 

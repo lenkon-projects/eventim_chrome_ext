@@ -51,6 +51,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           await handleReportReady(message.reportData);
           break;
 
+        case CONFIG.MESSAGE_TYPES.OPEN_REPORT_URL:
+          await handleOpenReportUrl(message.url);
+          break;
+
         case CONFIG.MESSAGE_TYPES.ERROR:
           await handleError(message.error, message.context);
           break;
@@ -167,18 +171,15 @@ async function getOrCreateEventimTab() {
   if (tabs.length > 0) {
     logger.info('Found existing Eventim tab:', tabs[0].id);
 
-    // Reload the tab to ensure content script is loaded
-    // This fixes "Could not establish connection" error
-    logger.info('Reloading tab to ensure content script is loaded');
+    // Reload page to get fresh event list
+    logger.info('Refreshing page to get latest events');
     await chrome.tabs.reload(tabs[0].id);
 
-    // Wait for tab to finish loading
-    let loadCompleted = false;
+    // Wait for page to reload
     await new Promise((resolve) => {
       const listener = (tabId, changeInfo) => {
         if (tabId === tabs[0].id && changeInfo.status === 'complete') {
           chrome.tabs.onUpdated.removeListener(listener);
-          loadCompleted = true;
           resolve();
         }
       };
@@ -191,18 +192,33 @@ async function getOrCreateEventimTab() {
       }, 10000);
     });
 
-    // FIX: Check if load completed
-    if (!loadCompleted) {
-      logger.error('Tab reload timed out after 10 seconds');
-      await storage.cleanupAutomation();
-      await storage.setState(CONFIG.FLOW_STATES.ERROR, {
-        message: 'Tab reload timeout'
-      });
-      throw new Error('Tab reload timeout');
-    }
+    logger.info('Page refreshed');
 
-    await chrome.tabs.update(tabs[0].id, { active: true });
-    return tabs[0];
+    // Check if content script is loaded after reload
+    try {
+      await chrome.tabs.sendMessage(tabs[0].id, { type: 'PING' });
+      logger.info('Content script already loaded');
+      return tabs[0];
+    } catch (error) {
+      // Content script not loaded, inject it programmatically
+      logger.info('Content script not loaded, injecting programmatically');
+
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId: tabs[0].id },
+          files: ['lib/config.js', 'lib/logger.js', 'content/eventim-navigator.js']
+        });
+
+        // Wait a bit for scripts to initialize
+        await new Promise(resolve => setTimeout(resolve, 1000));
+
+        logger.info('Content scripts injected successfully');
+        return tabs[0];
+      } catch (injectError) {
+        logger.error('Failed to inject content scripts:', injectError);
+        throw new Error('Failed to load content scripts. Please reload the Eventim page manually.');
+      }
+    }
   }
 
   // Create new tab
@@ -270,6 +286,22 @@ async function handleProcessingEvent(data) {
   notifyStatusUpdate();
 }
 
+// Handle opening report URL in background tab
+async function handleOpenReportUrl(url) {
+  logger.info('Opening report URL in background tab:', url);
+
+  // Create tab in background (without stealing focus)
+  const reportTab = await chrome.tabs.create({
+    url: url,
+    active: false
+  });
+
+  // Store report tab ID for later cleanup
+  await chrome.storage.local.set({ reportTabId: reportTab.id });
+
+  logger.info('Report tab opened in background:', reportTab.id);
+}
+
 // Handle report ready for download
 async function handleReportReady(reportData) {
   logger.info('Report ready for download:', reportData.metadata);
@@ -277,6 +309,18 @@ async function handleReportReady(reportData) {
   try {
     await downloadReport(reportData);
     logger.info('Report downloaded successfully');
+
+    // Close the report tab after successful download
+    const { reportTabId } = await chrome.storage.local.get('reportTabId');
+    if (reportTabId) {
+      try {
+        await chrome.tabs.remove(reportTabId);
+        logger.info('Report tab closed:', reportTabId);
+        await chrome.storage.local.remove('reportTabId');
+      } catch (error) {
+        logger.warn('Failed to close report tab:', error.message);
+      }
+    }
   } catch (error) {
     logger.error('Failed to download report:', error);
 
@@ -415,6 +459,20 @@ async function handleError(error, context) {
 
   // CLEAR AUTOMATION LOCK on error
   await storage.clearAutomationLock();
+
+  // Close report tab if error occurred on report page
+  if (context?.page === 'report') {
+    const { reportTabId } = await chrome.storage.local.get('reportTabId');
+    if (reportTabId) {
+      try {
+        await chrome.tabs.remove(reportTabId);
+        logger.info('Report tab closed after error:', reportTabId);
+        await chrome.storage.local.remove('reportTabId');
+      } catch (tabError) {
+        logger.warn('Failed to close report tab:', tabError.message);
+      }
+    }
+  }
 
   // Show notification if enabled
   const settings = await storage.getSettings();

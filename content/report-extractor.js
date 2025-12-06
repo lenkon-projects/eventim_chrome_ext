@@ -93,6 +93,29 @@ class ReportExtractor {
       // Wait for report to fully load
       await this.waitForReportLoad();
 
+      // Check for error page before extracting
+      const errorCheck = this.checkForErrorPage();
+      if (errorCheck.isError) {
+        this.logger.error('Error page detected:', errorCheck.message);
+
+        chrome.runtime.sendMessage({
+          type: CONFIG.MESSAGE_TYPES.ERROR,
+          error: {
+            code: errorCheck.code,
+            message: errorCheck.message
+          },
+          context: { page: 'report', url: window.location.href }
+        });
+
+        // Close error tab after short delay
+        setTimeout(() => {
+          this.logger.info('Closing error page tab');
+          window.close();
+        }, 1000);
+
+        return;
+      }
+
       this.logger.info('Extracting report metadata');
 
       // Extract metadata
@@ -136,6 +159,54 @@ class ReportExtractor {
         context: { page: 'report', url: window.location.href }
       });
     }
+  }
+
+  checkForErrorPage() {
+    // Check for Eventim error messages
+    const bodyText = document.body.textContent || '';
+    const bodyHTML = document.body.innerHTML || '';
+
+    // Check for login error (ErrorCode=10)
+    if (bodyText.includes('User is no longer logged in') ||
+        bodyText.includes('please log in again') ||
+        bodyHTML.includes('ErrorCode=10')) {
+      return {
+        isError: true,
+        code: CONFIG.ERROR_CODES.NOT_LOGGED_IN,
+        message: 'Session expired. Please log in to Eventim again.'
+      };
+    }
+
+    // Check for other common error patterns
+    const errorPatterns = [
+      { pattern: /error:/i, keyword: 'Error' },
+      { pattern: /fehler:/i, keyword: 'Fehler' },
+      { pattern: /access denied/i, keyword: 'Access Denied' },
+      { pattern: /zugriff verweigert/i, keyword: 'Zugriff Verweigert' }
+    ];
+
+    for (const { pattern, keyword } of errorPatterns) {
+      if (pattern.test(bodyText)) {
+        // Check if this is in error styling
+        const errorElements = document.querySelectorAll('.error, .errorMessage, [class*="error"]');
+        if (errorElements.length > 0) {
+          const errorText = Array.from(errorElements)
+            .map(el => el.textContent.trim())
+            .join('; ');
+
+          if (errorText.length > 0) {
+            return {
+              isError: true,
+              code: CONFIG.ERROR_CODES.UNKNOWN,
+              message: `Report page error: ${errorText}`
+            };
+          }
+        }
+      }
+    }
+
+    // No errors detected
+    return { isError: false };
   }
 
   async waitForReportLoad() {
