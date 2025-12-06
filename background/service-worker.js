@@ -17,7 +17,9 @@ chrome.runtime.onInstalled.addListener(async (details) => {
       filenamePattern: CONFIG.DEFAULTS.FILENAME_PATTERN,
       delays: CONFIG.DEFAULTS.DELAYS,
       retryAttempts: CONFIG.DEFAULTS.RETRY_ATTEMPTS,
-      notifications: CONFIG.DEFAULTS.NOTIFICATIONS
+      notifications: CONFIG.DEFAULTS.NOTIFICATIONS,
+      syncMode: CONFIG.DEFAULTS.SYNC_MODE,
+      apiBearerToken: ''
     });
     logger.info('Default settings initialized');
   }
@@ -304,13 +306,21 @@ async function handleOpenReportUrl(url) {
 
 // Handle report ready for download
 async function handleReportReady(reportData) {
-  logger.info('Report ready for download:', reportData.metadata);
+  logger.info('Report ready:', reportData.metadata);
 
   try {
-    await downloadReport(reportData);
-    logger.info('Report downloaded successfully');
+    const settings = await storage.getSettings();
 
-    // Close the report tab after successful download
+    // Choose sync method based on settings
+    if (settings.syncMode === 'api') {
+      await syncReportToAPI(reportData);
+      logger.info('Report synced to API successfully');
+    } else {
+      await downloadReport(reportData);
+      logger.info('Report downloaded successfully');
+    }
+
+    // Close the report tab after successful processing
     const { reportTabId } = await chrome.storage.local.get('reportTabId');
     if (reportTabId) {
       try {
@@ -322,13 +332,23 @@ async function handleReportReady(reportData) {
       }
     }
   } catch (error) {
-    logger.error('Failed to download report:', error);
+    logger.error('Failed to process report:', error);
 
-    // FIX: Clear lock on download failure
+    // Clear lock on processing failure
     await storage.cleanupAutomation();
 
+    // Determine error code
+    let errorCode = CONFIG.ERROR_CODES.DOWNLOAD_FAILED;
+    if (error.message.includes('timeout')) {
+      errorCode = CONFIG.ERROR_CODES.API_TIMEOUT;
+    } else if (error.message.includes('401') || error.message.includes('403') || error.message.includes('bearer token')) {
+      errorCode = CONFIG.ERROR_CODES.API_AUTH_FAILED;
+    } else if (error.message.includes('API')) {
+      errorCode = CONFIG.ERROR_CODES.API_ERROR;
+    }
+
     await storage.recordError({
-      code: CONFIG.ERROR_CODES.DOWNLOAD_FAILED,
+      code: errorCode,
       message: error.message,
       context: reportData.metadata
     });
@@ -355,6 +375,75 @@ async function downloadReport(reportData) {
   });
 
   logger.info('Download initiated:', filename);
+}
+
+// Sync report to API
+async function syncReportToAPI(reportData, retryCount = 0) {
+  logger.info('Syncing report to API:', reportData.url);
+
+  try {
+    const apiConfig = await storage.getApiConfig();
+
+    if (!apiConfig.bearerToken) {
+      throw new Error('API bearer token not configured');
+    }
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), CONFIG.API.TIMEOUT_MS);
+
+    try {
+      const response = await fetch(apiConfig.endpoint, {
+        method: 'POST',
+        headers: {
+          'accept': 'application/json',
+          'Authorization': `Bearer ${apiConfig.bearerToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ url: reportData.url }),
+        signal: controller.signal
+      });
+
+      clearTimeout(timeoutId);
+      const responseData = await response.json();
+
+      if (!response.ok) {
+        throw new Error(`API error (${response.status}): ${responseData.error || responseData.message || 'Unknown error'}`);
+      }
+
+      logger.info('API sync successful:', responseData);
+      await storage.recordSuccess(1);
+
+      const settings = await storage.getSettings();
+      if (settings.notifications.completion) {
+        showNotification('success', `Report synced: ${reportData.metadata.eventName}`);
+      }
+
+      return responseData;
+
+    } catch (fetchError) {
+      clearTimeout(timeoutId);
+
+      if (fetchError.name === 'AbortError') {
+        throw new Error('API request timeout');
+      }
+      throw fetchError;
+    }
+
+  } catch (error) {
+    // Retry logic for network errors
+    const isRetryable = error.message.includes('timeout') ||
+                       error.message.includes('network') ||
+                       error.name === 'NetworkError';
+
+    if (isRetryable && retryCount < CONFIG.API.RETRY_ATTEMPTS) {
+      logger.info(`Retrying API call (attempt ${retryCount + 1}/${CONFIG.API.RETRY_ATTEMPTS})`);
+      await new Promise(resolve => setTimeout(resolve, CONFIG.API.RETRY_DELAY_MS * (retryCount + 1)));
+      return syncReportToAPI(reportData, retryCount + 1);
+    }
+
+    logger.error('Failed to sync report to API:', error);
+    throw error;
+  }
 }
 
 // Generate filename from template

@@ -4,6 +4,12 @@
 const autoDownloadEnabled = document.getElementById('autoDownloadEnabled');
 const intervalValue = document.getElementById('intervalValue');
 const intervalUnit = document.getElementById('intervalUnit');
+const syncMode = document.getElementById('syncMode');
+const apiSettings = document.getElementById('apiSettings');
+const downloadSettings = document.getElementById('downloadSettings');
+const apiBearerToken = document.getElementById('apiBearerToken');
+const testApiBtn = document.getElementById('testApiBtn');
+const apiTestStatus = document.getElementById('apiTestStatus');
 const filenamePattern = document.getElementById('filenamePattern');
 const delayMin = document.getElementById('delayMin');
 const delayMax = document.getElementById('delayMax');
@@ -19,6 +25,12 @@ document.addEventListener('DOMContentLoaded', loadSettings);
 // Save button
 saveBtn.addEventListener('click', saveSettings);
 
+// Sync mode change
+syncMode.addEventListener('change', toggleSettingsSections);
+
+// Test API button
+testApiBtn.addEventListener('click', testApiConnection);
+
 // Load settings from storage
 async function loadSettings() {
   try {
@@ -27,7 +39,9 @@ async function loadSettings() {
       'filenamePattern',
       'delays',
       'retryAttempts',
-      'notifications'
+      'notifications',
+      'syncMode',
+      'apiBearerToken'
     ]);
 
     // Schedule settings
@@ -36,6 +50,11 @@ async function loadSettings() {
       intervalValue.value = settings.schedule.intervalValue || 60;
       intervalUnit.value = settings.schedule.intervalUnit || 'minutes';
     }
+
+    // Sync mode
+    syncMode.value = settings.syncMode || 'download';
+    apiBearerToken.value = settings.apiBearerToken || '';
+    toggleSettingsSections();
 
     // Filename pattern
     filenamePattern.value = settings.filenamePattern || '{eventName}_{dateRange}_{timestamp}.html';
@@ -79,6 +98,8 @@ async function saveSettings() {
         intervalValue: parseInt(intervalValue.value) || 60,
         intervalUnit: intervalUnit.value
       },
+      syncMode: syncMode.value,
+      apiBearerToken: apiBearerToken.value || '',
       filenamePattern: filenamePattern.value || '{eventName}_{dateRange}_{timestamp}.html',
       delays: {
         min: parseInt(delayMin.value) || 500,
@@ -115,4 +136,55 @@ function showSaveStatus(message, type) {
     saveStatus.textContent = '';
     saveStatus.className = 'save-status';
   }, 3000);
+}
+
+// Toggle visibility of settings sections based on sync mode
+function toggleSettingsSections() {
+  const isApiMode = syncMode.value === 'api';
+  apiSettings.style.display = isApiMode ? 'block' : 'none';
+  downloadSettings.style.display = isApiMode ? 'none' : 'block';
+}
+
+// Test API connection
+async function testApiConnection() {
+  try {
+    apiTestStatus.textContent = 'Testing...';
+    apiTestStatus.className = 'test-status info';
+
+    const token = apiBearerToken.value;
+    if (!token) {
+      showApiTestStatus('Please enter a bearer token', 'error');
+      return;
+    }
+
+    const response = await fetch('https://scrapper.liorizhakidrums.com/api/eventim/parse-and-sync', {
+      method: 'POST',
+      headers: {
+        'accept': 'application/json',
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ url: 'https://webreporting.eventim.de/test' })
+    });
+
+    if (response.ok) {
+      showApiTestStatus('Connection successful!', 'success');
+    } else if (response.status === 401 || response.status === 403) {
+      showApiTestStatus('Authentication failed', 'error');
+    } else {
+      showApiTestStatus(`Error: ${response.status}`, 'error');
+    }
+
+  } catch (error) {
+    showApiTestStatus(`Connection failed: ${error.message}`, 'error');
+  }
+}
+
+// Show API test status message
+function showApiTestStatus(message, type) {
+  apiTestStatus.textContent = message;
+  apiTestStatus.className = `test-status ${type}`;
+  setTimeout(() => {
+    apiTestStatus.textContent = '';
+  }, 5000);
 }

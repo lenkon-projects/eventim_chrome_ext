@@ -37,6 +37,49 @@
       </section>
 
       <section class="settings-section">
+        <h2>Sync Mode</h2>
+
+        <div class="setting-group">
+          <label for="syncMode">Report Handling:</label>
+          <select id="syncMode">
+            <option value="download">Download HTML Files</option>
+            <option value="api">Sync to API</option>
+          </select>
+          <small>Choose how to handle extracted reports</small>
+        </div>
+      </section>
+
+      <section class="settings-section" id="apiSettings" style="display: none;">
+        <h2>API Configuration</h2>
+
+        <div class="setting-group">
+          <label>API Endpoint:</label>
+          <input
+            type="text"
+            id="apiEndpoint"
+            value="https://scrapper.liorizhakidrums.com/api/eventim/parse-and-sync"
+            disabled
+          >
+          <small>API endpoint for report synchronization (read-only)</small>
+        </div>
+
+        <div class="setting-group">
+          <label for="apiBearerToken">Bearer Token:</label>
+          <input
+            type="password"
+            id="apiBearerToken"
+            placeholder="tk_..."
+          >
+          <small>Authentication token for API requests</small>
+        </div>
+
+        <div class="setting-group">
+          <button id="testApiBtn" class="secondary-button">Test API Connection</button>
+          <span id="apiTestStatus" class="test-status"></span>
+        </div>
+      </section>
+
+      <section class="settings-section" id="downloadSettings">
         <h2>File Naming</h2>
 
         <div class="setting-group">

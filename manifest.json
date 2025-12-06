@@ -14,7 +14,8 @@
   ],
 
   "host_permissions": [
-    "https://webreporting.eventim.de/*"
+    "https://webreporting.eventim.de/*",
+    "https://scrapper.liorizhakidrums.com/*"
   ],
 
   "background": {

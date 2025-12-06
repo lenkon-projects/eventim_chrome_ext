@@ -139,13 +139,9 @@ class ReportExtractor {
         }
       });
 
-      this.logger.info('Report sent to background for download');
+      this.logger.info('Report sent to background for processing');
 
-      // Close tab after short delay
-      setTimeout(() => {
-        this.logger.info('Closing report tab');
-        window.close();
-      }, 1000);
+      // Tab will be closed by background service worker after processing
 
     } catch (error) {
       this.logger.error('Failed to extract report:', error);
