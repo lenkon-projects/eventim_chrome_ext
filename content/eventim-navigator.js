@@ -8,12 +8,89 @@ class EventimNavigator {
     this.eventQueue = [];
     this.currentEventIndex = 0;
     this.retryCount = 0;
+    this.sessionId = null;  // Track automation session ID
 
-    // Listen for commands from background
+    // Setup message listener
     chrome.runtime.onMessage.addListener(this.handleMessage.bind(this));
 
-    // Auto-detect page type and notify
-    this.detectPageAndNotify();
+    this.logger.info('EventimNavigator initialized');
+
+    // Check if automation is active and resume if needed
+    this.checkAndResume();
+  }
+
+  async checkAndResume() {
+    // Check if automation is currently active
+    const lockStatus = await this.getAutomationLock();
+
+    if (!lockStatus.active) {
+      this.logger.info('No active automation, waiting for START_NAVIGATION message');
+      return;
+    }
+
+    // Automation is active - check current page and resume
+    this.logger.info('Automation is active, checking current page');
+    this.sessionId = lockStatus.sessionId;
+
+    // Skip auto-resume on start page - that should only be triggered by START_NAVIGATION
+    const url = window.location.href;
+    if (url.includes('STOwnEvents.aspx')) {
+      this.logger.info('On start page, waiting for START_NAVIGATION message');
+      return;
+    }
+
+    // On other pages during active automation, detect and proceed
+    await this.detectPageAndNotify();
+  }
+
+  async getAutomationLock() {
+    // Use chrome.storage to check lock (only local storage for content scripts)
+    return new Promise((resolve) => {
+      // Check if CONFIG is loaded
+      if (typeof CONFIG === 'undefined' || !CONFIG.AUTOMATION) {
+        this.logger.warn('CONFIG not loaded yet, assuming automation inactive');
+        resolve({ active: false, reason: 'config_not_loaded' });
+        return;
+      }
+
+      try {
+        // Content scripts can only reliably use chrome.storage.local
+        chrome.storage.local.get([
+          CONFIG.AUTOMATION.LOCK_KEY,
+          CONFIG.AUTOMATION.SESSION_ID_KEY,
+          CONFIG.AUTOMATION.START_TIME_KEY
+        ], (data) => {
+          // Check for chrome runtime errors
+          if (chrome.runtime.lastError) {
+            this.logger.error('Storage access error:', chrome.runtime.lastError);
+            resolve({ active: false, reason: 'storage_error' });
+            return;
+          }
+
+          const isActive = data[CONFIG.AUTOMATION.LOCK_KEY] || false;
+          const startTime = data[CONFIG.AUTOMATION.START_TIME_KEY];
+
+          // Check timeout
+          if (isActive && startTime) {
+            const elapsed = Date.now() - startTime;
+            if (elapsed > CONFIG.AUTOMATION.TIMEOUT_MS) {
+              this.logger.info('Automation lock expired');
+              resolve({ active: false, reason: 'timeout' });
+              return;
+            }
+          }
+
+          resolve({
+            active: isActive,
+            sessionId: data[CONFIG.AUTOMATION.SESSION_ID_KEY],
+            startTime: startTime
+          });
+        });
+      } catch (error) {
+        this.logger.error('Exception checking automation lock:', error);
+        resolve({ active: false, reason: 'exception' });
+      }
+    });
   }
 
   handleMessage(message, sender, sendResponse) {
@@ -21,6 +98,9 @@ class EventimNavigator {
 
     switch (message.type) {
       case CONFIG.MESSAGE_TYPES.START_NAVIGATION:
+        // Store session ID from background
+        this.sessionId = message.sessionId;
+
         // Handle async navigation
         this.startNavigation()
           .then(() => sendResponse({ success: true }))
@@ -64,7 +144,7 @@ class EventimNavigator {
     // Notify ready
     chrome.runtime.sendMessage({
       type: CONFIG.MESSAGE_TYPES.FLOW_STATE_CHANGE,
-      state: 'READY_TO_START'
+      state: CONFIG.FLOW_STATES.READY_TO_START
     });
   }
 
@@ -227,7 +307,36 @@ class EventimNavigator {
     // Wait for page to fully load
     await this.waitForPageLoad();
 
-    // Extract all events
+    // Check if we're resuming from chrome.storage (back from details page)
+    const progress = await chrome.storage.local.get(['eventProgressIndex', 'eventProgressQueue']);
+
+    if (progress.eventProgressIndex !== undefined && progress.eventProgressQueue) {
+      this.logger.info('Resuming from saved progress');
+      this.currentEventIndex = progress.eventProgressIndex;
+      this.eventQueue = progress.eventProgressQueue;
+
+      // Clear saved progress
+      await chrome.storage.local.remove(['eventProgressIndex', 'eventProgressQueue']);
+
+      // FIX: Send state update when resuming
+      chrome.runtime.sendMessage({
+        type: CONFIG.MESSAGE_TYPES.FLOW_STATE_CHANGE,
+        state: CONFIG.FLOW_STATES.PROCESSING_EVENTS,
+        data: {
+          currentEvent: {
+            index: this.currentEventIndex,
+            total: this.eventQueue.length
+          }
+        }
+      });
+
+      // Continue processing from where we left off
+      await this.randomDelay(1000, 2000);
+      await this.processNextEvent();
+      return;
+    }
+
+    // First time on page - extract all events
     const events = this.extractEvents();
 
     if (events.length === 0) {
@@ -252,6 +361,40 @@ class EventimNavigator {
     // Start processing first event
     await this.randomDelay(1000, 2000);
     await this.processNextEvent();
+  }
+
+  extractEventInfoFromUrl(url) {
+    // Extract event info from SalesTrendDetails URL
+    // URL format: SalesTrendDetails.aspx?RestrictionType=Client&RestrictionID=0&BeginDate=...&EndDate=...
+    try {
+      const urlObj = new URL(url);
+      const params = urlObj.searchParams;
+
+      const beginDate = params.get('BeginDate');
+      const endDate = params.get('EndDate');
+
+      // Try to get event name from page title or content
+      let eventName = 'Single Event';
+      const pageTitle = document.title;
+      if (pageTitle && !pageTitle.includes('Sales Trend')) {
+        eventName = pageTitle;
+      }
+
+      return {
+        name: eventName,
+        url: url,
+        index: 0,
+        beginDate: beginDate,
+        endDate: endDate
+      };
+    } catch (error) {
+      this.logger.error('Failed to extract event info from URL:', error);
+      return {
+        name: 'Unknown Event',
+        url: url,
+        index: 0
+      };
+    }
   }
 
   extractEvents() {
@@ -354,26 +497,91 @@ class EventimNavigator {
     // Wait for page to load
     await this.waitForPageLoad();
 
+    // Restore event queue from storage if empty (page was reloaded)
+    if (this.eventQueue.length === 0) {
+      this.logger.info('Event queue is empty, restoring from storage');
+      const progress = await chrome.storage.local.get(['eventProgressIndex', 'eventProgressQueue']);
+
+      if (progress.eventProgressQueue) {
+        this.eventQueue = progress.eventProgressQueue;
+        this.currentEventIndex = progress.eventProgressIndex || 0;
+        this.logger.info(`Restored queue: ${this.eventQueue.length} events, current index: ${this.currentEventIndex}`);
+      } else {
+        this.logger.info('No event queue found in storage - single event case');
+
+        // SINGLE EVENT CASE: Navigation went directly from start page to details
+        // Create a virtual queue with current event from URL
+        const currentUrl = window.location.href;
+        const eventInfo = this.extractEventInfoFromUrl(currentUrl);
+
+        this.eventQueue = [eventInfo];
+        this.currentEventIndex = 0;
+
+        this.logger.info(`Created virtual queue for single event: ${eventInfo.name}`);
+
+        // Notify background about the single event
+        chrome.runtime.sendMessage({
+          type: CONFIG.MESSAGE_TYPES.EVENT_DISCOVERED,
+          events: this.eventQueue
+        });
+      }
+    }
+
+    // FIX: Send state update to indicate we're processing this event
+    chrome.runtime.sendMessage({
+      type: CONFIG.MESSAGE_TYPES.FLOW_STATE_CHANGE,
+      state: CONFIG.FLOW_STATES.PROCESSING_EVENTS,
+      data: {
+        status: 'Downloading report',
+        currentEvent: {
+          index: this.currentEventIndex,
+          total: this.eventQueue.length
+        }
+      }
+    });
+
     // Find HTML export button
     const htmlButton = this.findHtmlButton();
 
     if (!htmlButton) {
       this.logger.error('HTML button not found');
-      chrome.runtime.sendMessage({
-        type: CONFIG.MESSAGE_TYPES.ERROR,
-        error: {
-          code: CONFIG.ERROR_CODES.ELEMENT_NOT_FOUND,
-          message: 'Could not find HTML export button'
-        },
-        context: { page: 'details' }
-      });
 
-      // Try to go back and continue with next event
+      // Increment retry count
+      this.retryCount++;
+
+      // Check retry limit
+      if (this.retryCount >= 3) {
+        this.logger.error('Max retries (3) reached for HTML button, skipping event');
+
+        const currentEvent = this.eventQueue[this.currentEventIndex];
+        chrome.runtime.sendMessage({
+          type: CONFIG.MESSAGE_TYPES.ERROR,
+          error: {
+            code: CONFIG.ERROR_CODES.ELEMENT_NOT_FOUND,
+            message: `Could not find HTML export button after 3 retries for event: ${currentEvent?.name || 'Unknown'}`
+          },
+          context: {
+            page: 'details',
+            event: currentEvent,
+            retries: this.retryCount
+          }
+        });
+
+        // Reset retry count and skip to next event
+        this.retryCount = 0;
+        await this.goBackAndContinue();
+        return;
+      }
+
+      // Retry: go back and try this event again
+      this.logger.info(`Retry ${this.retryCount}/3 for current event`);
+      this.currentEventIndex--; // Decrement to retry same event
       await this.goBackAndContinue();
       return;
     }
 
     this.logger.info('HTML button found, clicking');
+    this.retryCount = 0; // Reset retry count on success
 
     // Add delay before clicking
     await this.randomDelay(500, 1000);
@@ -391,7 +599,40 @@ class EventimNavigator {
   }
 
   async goBackAndContinue() {
-    this.logger.info('Going back to SalesTrend page');
+    this.logger.info('Going back to continue processing');
+
+    // Move to next event
+    this.currentEventIndex++;
+
+    // Check if all events are processed
+    if (this.currentEventIndex >= this.eventQueue.length) {
+      this.logger.info('All events processed, completing automation');
+
+      // Clear saved progress
+      await chrome.storage.local.remove(['eventProgressIndex', 'eventProgressQueue']);
+
+      // Send COMPLETE state
+      chrome.runtime.sendMessage({
+        type: CONFIG.MESSAGE_TYPES.FLOW_STATE_CHANGE,
+        state: CONFIG.FLOW_STATES.COMPLETE
+      });
+
+      // Navigate back to start page
+      this.logger.info('Navigating to start page');
+      await this.randomDelay(1000, 2000);
+      window.location.href = CONFIG.URLS.START_PAGE;
+
+      return;
+    }
+
+    // More events to process - save progress and go back
+    this.logger.info(`${this.eventQueue.length - this.currentEventIndex} events remaining`);
+
+    // Save progress to chrome.storage
+    await chrome.storage.local.set({
+      eventProgressIndex: this.currentEventIndex,
+      eventProgressQueue: this.eventQueue
+    });
 
     // Go back to SalesTrend page
     window.history.back();
@@ -399,17 +640,8 @@ class EventimNavigator {
     // Wait for page to load
     await this.randomDelay(1000, 2000);
 
-    // Move to next event
-    this.currentEventIndex++;
-
-    // Process next event
-    // We'll detect we're back on SalesTrend page and need to continue
-    // For now, set a flag in session storage
-    sessionStorage.setItem('eventim_current_index', this.currentEventIndex);
-    sessionStorage.setItem('eventim_event_queue', JSON.stringify(this.eventQueue));
-
     // After page loads (history.back), we need to continue processing
-    // We'll check session storage in onSalesTrendPage
+    // We'll check chrome.storage in onSalesTrendPage
   }
 
   findHtmlButton() {
@@ -482,22 +714,26 @@ class EventimNavigator {
 // Initialize navigator when script loads
 const navigator = new EventimNavigator();
 
-// Check if we're resuming from session storage
+// Resume from saved progress after page navigation (history.back)
 window.addEventListener('load', async () => {
-  const savedIndex = sessionStorage.getItem('eventim_current_index');
-  const savedQueue = sessionStorage.getItem('eventim_event_queue');
+  // Check if we were in the middle of processing events
+  const progress = await chrome.storage.local.get(['eventProgressIndex', 'eventProgressQueue']);
 
-  if (savedIndex && savedQueue && window.location.href.includes('SalesTrend.aspx')) {
-    navigator.logger.info('Resuming from saved state');
-    navigator.currentEventIndex = parseInt(savedIndex, 10);
-    navigator.eventQueue = JSON.parse(savedQueue);
+  // ONLY resume if we have saved progress AND we're on the SalesTrend page
+  if (progress.eventProgressIndex !== undefined &&
+      progress.eventProgressQueue &&
+      window.location.href.includes('SalesTrend.aspx')) {
 
-    // Clear session storage
-    sessionStorage.removeItem('eventim_current_index');
-    sessionStorage.removeItem('eventim_event_queue');
+    navigator.logger.info('Resuming from saved progress (returned from event details)');
+    navigator.currentEventIndex = progress.eventProgressIndex;
+    navigator.eventQueue = progress.eventProgressQueue;
 
-    // Continue processing
+    // Clear saved progress
+    await chrome.storage.local.remove(['eventProgressIndex', 'eventProgressQueue']);
+
+    // Continue processing next event
     await navigator.randomDelay(1000, 2000);
     await navigator.processNextEvent();
   }
+  // Otherwise, do nothing - automation only starts via START_NAVIGATION message
 });

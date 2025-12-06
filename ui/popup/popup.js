@@ -39,8 +39,7 @@ async function updateUI() {
   try {
     // Get state from storage
     const state = await chrome.storage.local.get([
-      'currentState',
-      'flowState',
+      'flowState',  // Use ONLY flowState now
       'currentEvent',
       'lastRun'
     ]);
@@ -66,7 +65,7 @@ async function updateUI() {
 }
 
 function updateStatus(state) {
-  const currentState = state.flowState || state.currentState || 'idle';
+  const currentState = state.flowState || 'idle';  // Use ONLY flowState
   const currentEvent = state.currentEvent;
 
   // Reset classes
@@ -74,8 +73,7 @@ function updateStatus(state) {
 
   switch (currentState) {
     case 'idle':
-    case 'IDLE':
-    case 'READY_TO_START':
+    case 'ready_to_start':
       statusDot.classList.add('idle');
       statusText.textContent = 'Idle';
       progressText.textContent = '';
@@ -84,7 +82,6 @@ function updateStatus(state) {
       break;
 
     case 'navigating_to_salestrend':
-    case 'NAVIGATING_TO_SALESTREND':
       statusDot.classList.add('running');
       statusText.textContent = 'Navigating...';
       progressText.textContent = 'Opening sales report page';
@@ -92,17 +89,7 @@ function updateStatus(state) {
       btnText.textContent = 'Running...';
       break;
 
-    case 'loading_event_list':
-    case 'LOADING_EVENT_LIST':
-      statusDot.classList.add('running');
-      statusText.textContent = 'Loading events...';
-      progressText.textContent = 'Extracting event list';
-      downloadBtn.disabled = true;
-      btnText.textContent = 'Running...';
-      break;
-
     case 'processing_events':
-    case 'PROCESSING_EVENTS':
       statusDot.classList.add('running');
       statusText.textContent = 'Processing events...';
 
@@ -117,17 +104,7 @@ function updateStatus(state) {
       btnText.textContent = 'Running...';
       break;
 
-    case 'downloading_report':
-    case 'DOWNLOADING_REPORT':
-      statusDot.classList.add('running');
-      statusText.textContent = 'Downloading...';
-      progressText.textContent = 'Saving report';
-      downloadBtn.disabled = true;
-      btnText.textContent = 'Running...';
-      break;
-
     case 'complete':
-    case 'COMPLETE':
       statusDot.classList.add('complete');
       statusText.textContent = 'Complete';
       progressText.textContent = 'All reports downloaded';
@@ -136,7 +113,6 @@ function updateStatus(state) {
       break;
 
     case 'error':
-    case 'ERROR':
       statusDot.classList.add('error');
       statusText.textContent = 'Error';
       progressText.textContent = 'Check console for details';
@@ -215,7 +191,24 @@ function updateReportCount(lastRun) {
   }
 }
 
-function handleDownloadClick() {
+async function handleDownloadClick() {
+  // Check if automation already running
+  try {
+    // Check if CONFIG is loaded
+    if (typeof CONFIG === 'undefined' || !CONFIG.AUTOMATION) {
+      console.warn('CONFIG not loaded yet');
+    } else {
+      const lockData = await chrome.storage.local.get([CONFIG.AUTOMATION.LOCK_KEY]);
+
+      if (lockData[CONFIG.AUTOMATION.LOCK_KEY]) {
+        console.log('Automation already in progress');
+        return;
+      }
+    }
+  } catch (error) {
+    console.warn('Failed to check automation lock:', error);
+  }
+
   // Send manual trigger message to background
   chrome.runtime.sendMessage({
     type: 'MANUAL_TRIGGER'
