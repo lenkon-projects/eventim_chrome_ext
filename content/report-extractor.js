@@ -21,8 +21,69 @@ class ReportExtractor {
     this.logger.info('Report extractor initialized');
     this.logger.info('CONFIG available:', typeof CONFIG !== 'undefined');
 
+    // Check if automation is active before extracting
+    this.checkAutomationAndExtract();
+  }
+
+  async checkAutomationAndExtract() {
+    // Check if automation is currently active
+    const lockStatus = await this.getAutomationLock();
+
+    if (!lockStatus.active) {
+      this.logger.info('Automation not active, skipping report extraction');
+      return;
+    }
+
+    this.logger.info('Automation is active, proceeding with extraction');
     // Automatically extract and send report
     this.extractAndSendReport();
+  }
+
+  async getAutomationLock() {
+    return new Promise((resolve) => {
+      // Check if CONFIG is loaded
+      if (typeof CONFIG === 'undefined' || !CONFIG.AUTOMATION) {
+        this.logger.warn('CONFIG not loaded yet, assuming automation inactive');
+        resolve({ active: false, reason: 'config_not_loaded' });
+        return;
+      }
+
+      try {
+        chrome.storage.local.get([
+          CONFIG.AUTOMATION.LOCK_KEY,
+          CONFIG.AUTOMATION.SESSION_ID_KEY,
+          CONFIG.AUTOMATION.START_TIME_KEY
+        ], (data) => {
+          if (chrome.runtime.lastError) {
+            this.logger.error('Storage access error:', chrome.runtime.lastError);
+            resolve({ active: false, reason: 'storage_error' });
+            return;
+          }
+
+          const isActive = data[CONFIG.AUTOMATION.LOCK_KEY] || false;
+          const startTime = data[CONFIG.AUTOMATION.START_TIME_KEY];
+
+          // Check timeout
+          if (isActive && startTime) {
+            const elapsed = Date.now() - startTime;
+            if (elapsed > CONFIG.AUTOMATION.TIMEOUT_MS) {
+              this.logger.info('Automation lock expired');
+              resolve({ active: false, reason: 'timeout' });
+              return;
+            }
+          }
+
+          resolve({
+            active: isActive,
+            sessionId: data[CONFIG.AUTOMATION.SESSION_ID_KEY],
+            startTime: startTime
+          });
+        });
+      } catch (error) {
+        this.logger.error('Exception checking automation lock:', error);
+        resolve({ active: false, reason: 'exception' });
+      }
+    });
   }
 
   async extractAndSendReport() {
