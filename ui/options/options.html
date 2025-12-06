@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Eventim Report Downloader - Settings</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <div class="options-container">
+    <header>
+      <h1>Eventim Report Downloader</h1>
+      <p>Configure automatic report downloads</p>
+    </header>
+
+    <main>
+      <section class="settings-section">
+        <h2>Schedule</h2>
+
+        <div class="setting-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="autoDownloadEnabled">
+            <span>Enable automatic downloads</span>
+          </label>
+        </div>
+
+        <div class="setting-group">
+          <label for="frequency">Frequency:</label>
+          <select id="frequency">
+            <option value="daily">Daily</option>
+            <option value="weekly">Weekly</option>
+            <option value="custom">Custom (hours)</option>
+          </select>
+        </div>
+
+        <div class="setting-group" id="customHoursGroup" style="display: none;">
+          <label for="customHours">Hours between runs:</label>
+          <input type="number" id="customHours" min="1" max="168" value="24">
+        </div>
+      </section>
+
+      <section class="settings-section">
+        <h2>File Naming</h2>
+
+        <div class="setting-group">
+          <label for="filenamePattern">Filename pattern:</label>
+          <input
+            type="text"
+            id="filenamePattern"
+            placeholder="{eventName}_{dateRange}_{timestamp}.html"
+          >
+          <small>
+            Available variables: {eventName}, {dateRange}, {timestamp}, {date}, {reportId}
+          </small>
+        </div>
+      </section>
+
+      <section class="settings-section">
+        <h2>Advanced</h2>
+
+        <div class="setting-group">
+          <label>Delay between actions (milliseconds):</label>
+          <div class="range-inputs">
+            <input type="number" id="delayMin" min="100" max="5000" value="500">
+            <span>to</span>
+            <input type="number" id="delayMax" min="100" max="10000" value="2000">
+          </div>
+          <small>Random delay to appear more human-like</small>
+        </div>
+
+        <div class="setting-group">
+          <label for="retryAttempts">Retry attempts on failure:</label>
+          <input type="number" id="retryAttempts" min="0" max="10" value="3">
+        </div>
+      </section>
+
+      <section class="settings-section">
+        <h2>Notifications</h2>
+
+        <div class="setting-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="notifyCompletion">
+            <span>Show notification when download completes</span>
+          </label>
+        </div>
+
+        <div class="setting-group">
+          <label class="checkbox-label">
+            <input type="checkbox" id="notifyErrors">
+            <span>Show notification on errors</span>
+          </label>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="save-section">
+        <button id="saveBtn" class="primary-button">Save Settings</button>
+        <span id="saveStatus" class="save-status"></span>
+      </div>
+    </footer>
+  </div>
+
+  <script src="options.js"></script>
+</body>
+</html>

@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="popup-container">
+    <div class="header">
+      <h1>Eventim Reports</h1>
+    </div>
+
+    <div class="status-section">
+      <div class="status-indicator" id="statusIndicator">
+        <span class="status-dot" id="statusDot"></span>
+        <span class="status-text" id="statusText">Idle</span>
+      </div>
+      <div class="progress-text" id="progressText"></div>
+    </div>
+
+    <div class="action-section">
+      <button id="downloadBtn" class="primary-button">
+        <span id="btnText">Download Reports Now</span>
+      </button>
+    </div>
+
+    <div class="info-section">
+      <div class="info-row">
+        <span class="label">Last run:</span>
+        <span class="value" id="lastRun">Never</span>
+      </div>
+      <div class="info-row">
+        <span class="label">Schedule:</span>
+        <span class="value" id="schedule">Disabled</span>
+      </div>
+      <div class="info-row">
+        <span class="label">Reports:</span>
+        <span class="value" id="reportCount">0</span>
+      </div>
+    </div>
+
+    <div class="footer">
+      <a href="#" id="optionsLink">Settings</a>
+    </div>
+  </div>
+
+  <script src="../popup/popup.js"></script>
+</body>
+</html>

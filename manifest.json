@@ -1,0 +1,68 @@
+{
+  "manifest_version": 3,
+  "name": "Eventim Report Downloader",
+  "version": "1.0.0",
+  "description": "Automate downloading sales reports from Eventim Web Reporting",
+
+  "permissions": [
+    "storage",
+    "alarms",
+    "downloads",
+    "scripting",
+    "tabs",
+    "notifications"
+  ],
+
+  "host_permissions": [
+    "https://webreporting.eventim.de/*"
+  ],
+
+  "background": {
+    "service_worker": "background/service-worker.js"
+  },
+
+  "content_scripts": [
+    {
+      "matches": [
+        "https://webreporting.eventim.de/webreporting/*"
+      ],
+      "js": [
+        "lib/config.js",
+        "lib/logger.js",
+        "content/eventim-navigator.js"
+      ],
+      "run_at": "document_idle",
+      "exclude_matches": [
+        "https://webreporting.eventim.de/webreporting/public/Reports/*.html"
+      ]
+    },
+    {
+      "matches": [
+        "https://webreporting.eventim.de/webreporting/public/Reports/*.html"
+      ],
+      "js": [
+        "lib/config.js",
+        "lib/logger.js",
+        "content/report-extractor.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+
+  "action": {
+    "default_popup": "ui/popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+
+  "options_page": "ui/options/options.html",
+
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}
